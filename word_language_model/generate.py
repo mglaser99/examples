@@ -30,6 +30,9 @@ parser.add_argument('--temperature', type=float, default=1.0,
                     help='temperature - higher will increase diversity')
 parser.add_argument('--log-interval', type=int, default=100,
                     help='reporting interval')
+# my addition
+parser.add_argument('--input', type=str, required=False, default='',
+					help='input sequence')
 args = parser.parse_args()
 
 # Set the random seed manually for reproducibility.
@@ -53,11 +56,46 @@ ntokens = len(corpus.dictionary)
 is_transformer_model = hasattr(model, 'model_type') and model.model_type == 'Transformer'
 if not is_transformer_model:
     hidden = model.init_hidden(1)
-input = torch.randint(ntokens, (1, 1), dtype=torch.long).to(device)
+# input = torch.randint(ntokens, (1, 1), dtype=torch.long).to(device)
+
+# my additions
+# check if there is --input
+if args.input == '':
+    input_words = []
+    input_idxs = None
+    input = torch.randint(ntokens, (1, 1), dtype=torch.long).to(device)
+else:
+    # split the input into a list and generate the idxs for each input word
+    input_words = args.input.split()
+    input_idxs = []
+    for word in input_words:
+        if word not in corpus.dictionary.word2idx:
+            raise Exception(f"{word} is not part of the models vocabulary")
+        idx = corpus.dictionary.word2idx[word]
+        input_idxs.append(torch.tensor([[idx]], dtype=torch.long).to(device))
 
 with open(args.outf, 'w') as outf:
+
     with torch.no_grad():  # no tracking history
-        for i in range(args.words):
+
+        # my additions
+        # add each word of the input to the hidden layers and write them in the file
+        if input_idxs is not None:
+            for i in range(len(input_idxs)):
+                word = corpus.dictionary.idx2word[input_idxs[i]]
+                outf.write(word + ('\n' if i % 20 == 19 else ' '))
+
+                output, hidden = model(input_idxs[i], hidden)
+
+            word_weights = output.squeeze().div(args.temperature).exp().cpu()
+            word_idx = torch.multinomial(word_weights, 1)[0]
+            input = torch.tensor([[word_idx]], dtype=torch.long)
+
+            word = corpus.dictionary.idx2word[word_idx]
+
+            outf.write(word + ('\n' if i % 20 == 19 else ' '))
+
+        for i in range(len(input_words), args.words):
             if is_transformer_model:
                 output = model(input, False)
                 word_weights = output[-1].squeeze().div(args.temperature).exp().cpu()
